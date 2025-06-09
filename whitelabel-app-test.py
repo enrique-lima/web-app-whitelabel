@@ -131,8 +131,32 @@ if uploaded_file:
                 'compra_sugerida': compra
             })
 
+    # Monta DataFrame mensal bruto e pivot
     df_monthly = pd.DataFrame(records)
+    # Considerar somente meses futuros
+    df_monthly = df_monthly[df_monthly['mes'] > datetime.now().strftime('%Y-%m')]
+    # Pivot para colunas de forecast e compra por mês
+    forecast_cols = df_monthly.pivot_table(
+        index=['linha_otb','cor_produto','filial'],
+        columns='mes', values='forecast'
+    ).add_prefix('venda_prevista_')
+    compra_cols = df_monthly.pivot_table(
+        index=['linha_otb','cor_produto','filial'],
+        columns='mes', values='compra_sugerida'
+    ).add_prefix('compra_sugerida_')
+    # Combina em um único DataFrame final
+    df_output = pd.concat([forecast_cols, compra_cols], axis=1).reset_index()
+
     progresso.progress(75)
+    status.text('4/4 - Pronto!')
+    st.success('Forecast gerado com sucesso!')
+
+    # Download
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df_output.to_excel(writer, sheet_name='Forecast_Async', index=False)
+        df_trends.to_excel(writer, sheet_name='Tendencias', index=False)
+    buffer.seek(0)
     status.text('4/4 - Pronto!')
     st.success('Forecast gerado com sucesso!')
 
