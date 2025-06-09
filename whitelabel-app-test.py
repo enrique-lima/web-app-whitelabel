@@ -85,34 +85,39 @@ with tab1:
         df_p = df_vendas[df_vendas[key] == prod]
         sales_ts = df_p.groupby('date')['saldo_empresa'].sum().asfreq('MS').fillna(0)
 
-        if st.sidebar.button("Atualizar Forecast com Trends"):
-            trend_idx = fetch_trends(terms)
-            forecast = compute_forecast(sales_ts, trend_idx)
-            # Exibição
-            st.subheader(f"Previsão de Vendas (c/ Trends) para {prod}")
-            st.line_chart(pd.concat([sales_ts, forecast]))
-            estoque = df_estoque.loc[df_estoque[key] == prod, 'saldo_empresa'].sum()
-            need = max(0, forecast.sum() - estoque)
-            st.write(f"Estoque atual: {estoque:.0f} unidades")
-            st.write(f"Sugestão de compra (6m): {need:.0f} unidades")
+        # Executa forecast e prepara output imediatamente após seleção
+        trend_idx = fetch_trends(terms)
+        forecast = compute_forecast(sales_ts, trend_idx)
 
-            # Preparar arquivo de retorno
-            df_out = pd.DataFrame({
-                'date': forecast.index,
-                'forecast': forecast.values
-            })
-            buffer = BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                df_out.to_excel(writer, sheet_name='Forecast', index=False)
-                pd.DataFrame({'Sugestao_compra_6m': [need]}).to_excel(writer, sheet_name='Resumo', index=False)
-                writer.save()
-                buffer.seek(0)
-            st.download_button(
-                label='📥 Baixar Forecast e Sugestão',
-                data=buffer,
-                file_name=f'retorno_{prod}.xlsx',
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            )
+        # Exibição no app
+        st.subheader(f"Previsão de Vendas (c/ Trends) para {prod}")
+        st.line_chart(pd.concat([sales_ts, forecast]))
+        estoque = df_estoque.loc[df_estoque[key] == prod, 'saldo_empresa'].sum()
+        need = max(0, forecast.sum() - estoque)
+        st.write(f"Estoque atual: {estoque:.0f} unidades")
+        st.write(f"Sugestão de compra (6m): {need:.0f} unidades")
+
+        # Preparar arquivo de retorno (sem dados históricos)
+        df_out = pd.DataFrame({
+            'date': forecast.index,
+            'forecast': forecast.values
+        })
+        df_summary = pd.DataFrame({
+            'Sugestao_compra_6m': [need]
+        })
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df_out.to_excel(writer, sheet_name='Forecast', index=False)
+            df_summary.to_excel(writer, sheet_name='Resumo', index=False)
+        buffer.seek(0)
+
+        # Botão de download
+        st.download_button(
+            label='📥 Baixar Forecast e Sugestão',
+            data=buffer.getvalue(),
+            file_name=f'retorno_{prod}.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
 
 # SERP Tab
 with tab2:
