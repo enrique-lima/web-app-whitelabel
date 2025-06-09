@@ -124,14 +124,19 @@ if uploaded_file:
         prev_adj = (prev*(1+ajuste)).clip(lower=0)
         estoque_atual = int(df_estoque[(df_estoque["linha"]==l)&(df_estoque["cor"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())
         for date, val in prev_adj.items():
+            coverage = estoque_atual / val if val > 0 else None
+            purchase = max(int(val - estoque_atual), 0)
             records.append({
-                "linha_otb":l,
-                "cor_produto":c,
-                "filial":f,
-                "mes":date.strftime("%Y-%m"),
-                "forecast":int(val)
+                "linha_otb": l,
+                "cor_produto": c,
+                "filial": f,
+                "mes": date.strftime("%Y-%m"),
+                "forecast": int(val),
+                "estoque_atual": estoque_atual,
+                "cobertura_meses": round(coverage, 2) if coverage is not None else None,
+                "compra_sugerida": purchase
             })
-        # compra sugerida total (mantido em resumo)
+        # compra sugerida total (mantido em resumo) (mantido em resumo)
     df_monthly = pd.DataFrame(records)
     # resumo de compra
     resumo = df_monthly.groupby(["linha_otb","cor_produto","filial"]).agg(
@@ -161,11 +166,6 @@ if uploaded_file:
     status.text("100% concluído")
 
     st.download_button(
-        "⬇️ Baixar Forecast Mensal e Tendências",
-        buffer.getvalue(),
-        "output_forecast.xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )(
         "⬇️ Baixar Forecast Mensal e Tendências",
         buffer.getvalue(),
         "output_forecast.xlsx",
