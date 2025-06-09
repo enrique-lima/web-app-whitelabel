@@ -1,148 +1,134 @@
 import streamlit as st
 import pandas as pd
+import unicodedata
+import time
 from io import BytesIO
 from datetime import datetime
-from statsmodels.tsa.statespace.sarimax import SARIMAX
+from dateutil.relativedelta import relativedelta
+from statsmodels.tsa.api import ExponentialSmoothing
 from pytrends.request import TrendReq
-import requests
 from bs4 import BeautifulSoup
+import requests
 
-st.set_page_config(page_title="Previsão de Vendas & Posicionamento de Marca", layout="wide")
-st.title("📈 Previsão de Vendas com Google Trends & Reposição")
+# --- Funções Auxiliares ---
+def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    df.columns = [
+        unicodedata.normalize("NFKD", c)
+        .encode("ASCII", "ignore").decode("utf-8")
+        .strip().lower().replace(" ", "_")
+        for c in df.columns
+    ]
+    return df
 
-# --- Cache Data Loading ---
 @st.cache_data(show_spinner=False)
-def load_data(file_vendas, file_estoque):
-    df_v = pd.read_excel(file_vendas)
-    df_e = pd.read_excel(file_estoque)
-    for df in (df_v, df_e):
-        df.columns = (
-            df.columns.str.strip().str.lower()
-              .str.replace(" ", "_")
-              .str.normalize('NFKD')
-              .str.encode('ascii', errors='ignore').str.decode('utf-8')
-        )
-    df_v['date'] = pd.to_datetime(
-        dict(year=df_v['ano_venda'], month=df_v['mes_venda'], day=1)
+def carregar_dados(uploaded_file) -> tuple[pd.DataFrame, pd.DataFrame]:
+    xls = pd.ExcelFile(uploaded_file)
+    df_venda = normalizar_colunas(xls.parse("VENDA"))
+    df_estoque = normalizar_colunas(xls.parse("ESTOQUE"))
+    # Construir data
+    df_venda["mes_num"] = df_venda["mes_venda"].str.lower().map({
+        "janeiro":1,"fevereiro":2,"marco":3,"abril":4,"maio":5,"junho":6,
+        "julho":7,"agosto":8,"setembro":9,"outubro":10,"novembro":11,"dezembro":12
+    })
+    df_venda = df_venda.dropna(subset=["ano_venda","mes_num"])
+    df_venda["ano_mes"] = pd.to_datetime(
+        df_venda["ano_venda"].astype(int).astype(str) + "-" + df_venda["mes_num"].astype(int).astype(str) + "-01"
     )
-    return df_v, df_e
+    return df_venda, df_estoque
 
-# --- Cache Google Trends ---
-@st.cache_data(show_spinner=False)
-def fetch_trends(terms):
-    pytrends = TrendReq(hl='pt-BR', tz=-180)
-    frames = []
-    for i in range(0, len(terms), 5):
-        batch = terms[i:i+5]
-        pytrends.build_payload(batch, timeframe='today 12-m')
-        df = pytrends.interest_over_time().drop(columns=['isPartial'], errors='ignore')
-        frames.append(df)
-    trends = pd.concat(frames, axis=1)
-    idx = trends.mean(axis=1)
-    idx.name = 'trend_index'
-    return idx
+@st.cache_data(show_spinner=False, max_entries=32, ttl=3600*6)
+def get_trend_uplift(linhas_otb: list[str]) -> tuple[dict[str,float], pd.DataFrame]:
+    pytrends = TrendReq(hl="pt-BR", tz=-180)
+    genericos = [
+        "acessorios","alpargata","anabela","mocassim","bolsa","bota","cinto",
+        "loafer","rasteira","sandalia","sapatilha","scarpin","tenis","meia","meia pata",
+        "salto","salto fino","salto normal","sapato tratorado","mule","oxford",
+        "papete","peep flat","slide","sandália spike","salto spike","papete spike"
+    ]
+    concorrentes = ["alexander birman","schutz","arezzo","luiza barcelos","carmen steffens"]
+    registros = []
+    tendencias = {}
+    for linha in linhas_otb:
+        termos = [linha.lower()] + genericos + concorrentes
+        try:
+            pytrends.build_payload(termos, timeframe="today 3-m", geo="BR")
+            df_tr = pytrends.interest_over_time()
+            if not df_tr.empty:
+                base = df_tr[linha.lower()].mean()
+                gen = df_tr[genericos].mean(axis=1).mean()
+                conc = df_tr[concorrentes].mean(axis=1).mean()
+                uplift = ((base + gen + conc)/3 - 50)/100
+            else:
+                base=gen=conc=uplift=0
+        except:
+            base=gen=conc=uplift=0
+        tendencias[linha] = round(uplift,3)
+        registros.append({
+            "linha_otb":linha,
+            "score_linha":round(base,2),
+            "score_generico":round(gen,2),
+            "score_concorrente":round(conc,2),
+            "uplift_aplicado":round(uplift,3)
+        })
+        time.sleep(1)
+    return tendencias, pd.DataFrame(registros)
 
-# --- Cache Forecast Computation ---
-@st.cache_data(show_spinner=False)
-def compute_forecast(sales_ts, trend_idx, periods=6):
-    df_m = pd.concat([sales_ts, trend_idx], axis=1).dropna()
-    model = SARIMAX(df_m[sales_ts.name], exog=df_m[['trend_index']], order=(1,1,1))
-    res = model.fit(disp=False)
-    last_trend = trend_idx.iloc[-3:].mean()
-    future_exog = pd.DataFrame(
-        {'trend_index': [last_trend]*periods},
-        index=pd.date_range(
-            start=sales_ts.index[-1] + pd.offsets.MonthBegin(),
-            periods=periods, freq='MS'
-        )
-    )
-    forecast = res.get_forecast(steps=periods, exog=future_exog).predicted_mean
-    return forecast
+@st.cache_data(show_spinner=False, max_entries=128)
+def forecast_serie(serie: pd.Series, passos:int, saz:bool) -> pd.Series:
+    if serie.count()>=24 and saz:
+        modelo = ExponentialSmoothing(serie, trend="add", seasonal="add", seasonal_periods=12)
+    elif serie.count()>=6:
+        modelo = ExponentialSmoothing(serie, trend="add", seasonal=None)
+    else:
+        return pd.Series([serie.mean()]*passos,
+                         index=pd.date_range(serie.index[-1]+relativedelta(months=1),periods=passos,freq="MS"))
+    prev = modelo.fit().forecast(passos)
+    return prev.clip(lower=0)
 
-# --- Sidebar Setup ---
-st.sidebar.title("Configurações")
+# --- Interface ---
+st.image("https://raw.githubusercontent.com/enrique-lima/compra-moda-app/main/LOGO_TL.png", width=300)
+st.title("Previsão de Vendas e Reposição de Estoque")
+st.markdown("Este app faz forecast de vendas e recomendações de compra por Filial, Linha OTB e Cor.")
 
-# --- Main Tabs ---
-tab1, tab2 = st.tabs(["Forecast", "SERP Google"])
+uploaded_file = st.file_uploader("📂 Faça upload do arquivo Excel", type=["xlsx"], key='tpl')
+if uploaded_file:
+    progresso = st.progress(0); status=st.empty()
+    status.text("1/4 - Lendo e normalizando dados...")
+    df_venda, df_estoque = carregar_dados(uploaded_file)
+    progresso.progress(25)
 
-# Forecast Tab
-with tab1:
-    uploaded = st.file_uploader(
-        "Upload: vendas históricas e estoque atual", type=["xlsx","xls"], accept_multiple_files=True
-    )
-    if uploaded and len(uploaded) == 2:
-        df_vendas, df_estoque = load_data(uploaded[0], uploaded[1])
-        key = 'codigo_produto'
-        generic = ["acessorios","alpargata","anabela","mocassim","bolsa","bota","cinto",
-                   "loafer","rasteira","sandalia","sapatilha","scarpin","tenis","meia",
-                   "meia pata","salto","salto fino","salto normal","sapato tratorado",
-                   "mule","oxford","papete","peep flat","slide","sandália spike",
-                   "salto spike","papete spike"]
-        competitors = ["Alexander Birman","Luiza Barcelos","Schutz","Arezzo","Carmen Steffens"]
-        terms = generic + competitors
+    status.text("2/4 - Obtendo tendências Google Trends...")
+    linhas = df_venda["linha_otb"].dropna().unique().tolist()
+    trend_uplift, df_trends = get_trend_uplift(linhas)
+    progresso.progress(50)
 
-        prod = st.selectbox("Código do Produto", df_vendas[key].unique())
-        df_p = df_vendas[df_vendas[key] == prod]
-        sales_ts = df_p.groupby('date')['saldo_empresa'].sum().asfreq('MS').fillna(0)
+    status.text("3/4 - Calculando forecast por grupo...")
+    peso = st.sidebar.slider("Peso Google Trends (%)",0,100,100,5)/100
+    saz = st.sidebar.checkbox("Considerar sazonalidade",True)
+    periodos = 6
+    resultado = []
+    for (l,c,f), grp in df_venda.groupby(["linha_otb","cor_produto","filial"]):
+        serie = grp.set_index("ano_mes")["qtd_vendida"].resample("MS").sum().fillna(0)
+        prev = forecast_serie(serie,periodos,saz)
+        ajuste = trend_uplift.get(l,0)*peso
+        prev_adj = (prev*(1+ajuste)).clip(lower=0)
+        rec = prev_adj*2.8
+        estoque_atual = int(df_estoque[(df_estoque["linha"]==l)&(df_estoque["cor"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())
+        compra = int(max(rec.sum()-estoque_atual,0))
+        resultado.append({"linha_otb":l,"cor_produto":c,"filial":f,
+                          "previsao_6m":int(prev_adj.sum()),
+                          "compra_sugerida":compra})
+    df_out = pd.DataFrame(resultado)
+    progresso.progress(75)
 
-        # Compute forecast and suggest
-        trend_idx = fetch_trends(terms)
-        forecast = compute_forecast(sales_ts, trend_idx)
-        estoque = df_estoque.loc[df_estoque[key] == prod, 'saldo_empresa'].sum()
-        need = max(0, forecast.sum() - estoque)
+    status.text("4/4 - Pronto! Gere seu arquivo de saída.")
+    st.success("Forecast gerado com sucesso!")
+    st.dataframe(df_out)
 
-        # Display
-        st.subheader(f"Previsão de Vendas (c/ Trends) para {prod}")
-        st.line_chart(pd.concat([sales_ts, forecast]))
-        st.write(f"Estoque atual: {estoque:.0f} unidades")
-        st.write(f"Sugestão de compra (6m): {need:.0f} unidades")
-
-        # Prepare output file
-        df_out = pd.DataFrame({'date': forecast.index, 'forecast': forecast.values})
-        df_summary = pd.DataFrame({'Sugestao_compra_6m': [need]})
-        buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df_out.to_excel(writer, sheet_name='Forecast', index=False)
-            df_summary.to_excel(writer, sheet_name='Resumo', index=False)
-        data = buffer.getvalue()
-
-        # Download button
-        st.download_button(
-            label='📥 Baixar Forecast e Sugestão',
-            data=data,
-            file_name=f'retorno_{prod}.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            key=f'download_{prod}'
-        )
-
-# SERP Tab
-with tab2:
-    st.header("🔍 SERP Google - Tatiana Loureiro")
-    term = st.text_input("Digite o termo para pesquisar (ex: sandália spike)")
-    max_pages = st.number_input("Número de páginas a vasculhar", min_value=1, max_value=10, value=3)
-    if st.button("Buscar posição"):  
-        ua = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-            )
-        }
-        found = False
-        for page in range(max_pages):
-            start = page * 10
-            url = f"https://www.google.com/search?q={term.replace(' ','+')}" + f"&start={start}"
-            res = requests.get(url, headers=ua)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            results = soup.select('div.g')
-            for idx, g in enumerate(results, start=1):
-                link = g.find('a')
-                href = link['href'] if link and link.has_attr('href') else ''
-                if "tatianaloureiro.com.br" in href.lower():
-                    position = start + idx
-                    st.write(f"Encontrado na posição {position} (página {page+1})")
-                    found = True
-                    break
-            if found:
-                break
-        if not found:
-            st.write("Nenhum resultado da Tatiana Loureiro encontrado nas páginas buscadas.")
+    # Download
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer,engine='xlsxwriter') as w:
+        df_out.to_excel(w,sheet_name='Resumo',index=False)
+        df_trends.to_excel(w,sheet_name='Tendencias',index=False)
+    buffer.seek(0)
+    st.download_button("⬇️ Baixar Forecast e Tendências",buffer.getvalue(),"output_forecast.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
