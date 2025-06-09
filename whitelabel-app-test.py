@@ -86,6 +86,16 @@ def get_trend_uplift(linhas_otb: list[str]) -> tuple[dict[str,float], pd.DataFra
     df_records = pd.DataFrame(registros)
     return tendencias, df_records
 
+    elif serie.count() >= 6:
+        modelo = ExponentialSmoothing(serie, trend="add", seasonal=None)
+        prev = modelo.fit().forecast(passos)
+    else:
+        prev = pd.Series(
+            [serie.mean()] * passos,
+            index=pd.date_range(serie.index[-1] + relativedelta(months=1), periods=passos, freq="MS"),
+        )
+    return prev.clip(lower=0)
+
 @st.cache_data(show_spinner=False, max_entries=128)
 def forecast_serie(serie: pd.Series, passos:int, saz:bool) -> pd.Series:
     """
@@ -105,9 +115,7 @@ def forecast_serie(serie: pd.Series, passos:int, saz:bool) -> pd.Series:
             index=pd.date_range(serie.index[-1] + relativedelta(months=1), periods=passos, freq="MS"),
         )
     return prev.clip(lower=0)
-
-@st.cache_data(show_spinner=False, max_entries=128)
-def forecast_serie(serie: pd.Series, passos:int, saz:bool) -> pd.Series:
+(serie: pd.Series, passos:int, saz:bool) -> pd.Series:
     # TODO: implementar lógica de forecast conforme versão anterior
     pass
 
