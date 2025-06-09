@@ -122,7 +122,7 @@ if uploaded_file:
         prev = forecast_serie(serie,periodos,saz)
         ajuste = trend_uplift.get(l,0)*peso
         prev_adj = (prev*(1+ajuste)).clip(lower=0)
-        estoque_atual = int(df_estoque[(df_estoque["linha"]==l)&(df_estoque["cor"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())
+        estoque_atual = int(df_estoque[(df_estoque["linha_otb"]==l)&(df_estoque["cor_produto"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())&(df_estoque["cor"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())
         for date, val in prev_adj.items():
             coverage = estoque_atual / val if val > 0 else None
             purchase = max(int(val - estoque_atual), 0)
@@ -147,7 +147,7 @@ if uploaded_file:
     for _, row in resumo.iterrows():
         l, c, f = row['linha_otb'], row['cor_produto'], row['filial']
         estoque_atual = int(df_estoque[(df_estoque["linha"]==l)&(df_estoque["cor"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())
-        compras.append(max(int(row['previsao_6m']) - estoque_atual, 0))
+        compras.append(max(int(row['previsao_6m']) - int(df_estoque[(df_estoque['linha_otb']==row['linha_otb'])&(df_estoque['cor_produto']==row['cor_produto'])&(df_estoque['filial']==row['filial'])]['saldo_empresa'].sum()), 0))
     resumo['compra_sugerida'] = compras
     progresso.progress(75)
 
