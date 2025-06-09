@@ -135,9 +135,15 @@ if uploaded_file:
     df_monthly = pd.DataFrame(records)
     # resumo de compra
     resumo = df_monthly.groupby(["linha_otb","cor_produto","filial"]).agg(
-        previsao_6m=("forecast","sum"),
-        compra_sugerida=(lambda x: max(x.sum() - int(df_estoque[(df_estoque["linha"]==x.name[0])&(df_estoque["cor"]==x.name[1])&(df_estoque["filial"]==x.name[2])]["saldo_empresa"].sum()),0))
+        previsao_6m=("forecast","sum")
     ).reset_index()
+    # computar compra_sugerida separadamente
+    compras = []
+    for _, row in resumo.iterrows():
+        l, c, f = row['linha_otb'], row['cor_produto'], row['filial']
+        estoque_atual = int(df_estoque[(df_estoque["linha"]==l)&(df_estoque["cor"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())
+        compras.append(max(int(row['previsao_6m']) - estoque_atual, 0))
+    resumo['compra_sugerida'] = compras
     progresso.progress(75)
 
     status.text("4/4 - Pronto! Gere seu arquivo de saída.")
