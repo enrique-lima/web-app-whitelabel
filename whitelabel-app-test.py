@@ -46,17 +46,16 @@ def carregar_dados(uploaded_file) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 @st.cache_data(show_spinner=False, max_entries=32, ttl=3600*6)
 def get_trend_uplift(linhas_otb: list[str]) -> tuple[dict[str,float], pd.DataFrame]:
-    pytrends = TrendReq(hl="pt-BR", tz=-180)
-    genericos = [...]
-    concorrentes = [...]
-    # lógica igual à anterior
-    
+    # TODO: implementar lógica de Google Trends conforme versão anterior
+    pass
+
 @st.cache_data(show_spinner=False, max_entries=128)
 def forecast_serie(serie: pd.Series, passos:int, saz:bool) -> pd.Series:
-    # idêntica à anterior
-    
+    # TODO: implementar lógica de forecast conforme versão anterior
+    pass
+
 # --- Interface ---
-st.image(...)
+st.image(...)(...)
 st.title(...)
 
 uploaded_file = st.file_uploader(...)
