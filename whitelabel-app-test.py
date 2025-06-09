@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from io import BytesIO
 from datetime import datetime
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from pytrends.request import TrendReq
@@ -58,44 +59,91 @@ def compute_forecast(sales_ts, trend_idx, periods=6):
     forecast = res.get_forecast(steps=periods, exog=future_exog).predicted_mean
     return forecast
 
-# --- Upload files ---
-uploaded = st.file_uploader(
-    "Upload: vendas históricas e estoque atual",
-    type=["xlsx","xls"], accept_multiple_files=True
-)
-if uploaded and len(uploaded) == 2:
-    df_vendas, df_estoque = load_data(uploaded[0], uploaded[1])
-    key = 'codigo_produto'
+# --- Sidebar Setup ---
+st.sidebar.title("Configurações")
 
-    # termos genéricos e concorrentes
-    generic = ["acessorios","alpargata","anabela","mocassim","bolsa","bota","cinto",
-               "loafer","rasteira","sandalia","sapatilha","scarpin","tenis","meia",
-               "meia pata","salto","salto fino","salto normal","sapato tratorado",
-               "mule","oxford","papete","peep flat","slide","sandália spike",
-               "salto spike","papete spike"]
-    competitors = ["Alexander Birman","Luiza Barcelos","Schutz","Arezzo","Carmen Steffens"]
-    terms = generic + competitors
+# --- Main Tabs ---
+tab1, tab2 = st.tabs(["Forecast", "SERP Google"])
 
-    prod = st.selectbox("Código do Produto", df_vendas[key].unique())
-    df_p = df_vendas[df_vendas[key] == prod]
-    sales_ts = df_p.groupby('date')['saldo_empresa'].sum().asfreq('MS').fillna(0)
+# Forecast Tab
+with tab1:
+    uploaded = st.file_uploader(
+        "Upload: vendas históricas e estoque atual", type=["xlsx","xls"], accept_multiple_files=True
+    )
+    if uploaded and len(uploaded) == 2:
+        df_vendas, df_estoque = load_data(uploaded[0], uploaded[1])
+        key = 'codigo_produto'
+        generic = ["acessorios","alpargata","anabela","mocassim","bolsa","bota","cinto",
+                   "loafer","rasteira","sandalia","sapatilha","scarpin","tenis","meia",
+                   "meia pata","salto","salto fino","salto normal","sapato tratorado",
+                   "mule","oxford","papete","peep flat","slide","sandália spike",
+                   "salto spike","papete spike"]
+        competitors = ["Alexander Birman","Luiza Barcelos","Schutz","Arezzo","Carmen Steffens"]
+        terms = generic + competitors
 
-    if st.sidebar.button("Atualizar Forecast com Trends"):
-        trend_idx = fetch_trends(terms)
-        forecast = compute_forecast(sales_ts, trend_idx)
-        st.subheader(f"Previsão de Vendas (c/ Trends) para {prod}")
-        st.line_chart(pd.concat([sales_ts, forecast]))
-        estoque = df_estoque.loc[df_estoque[key] == prod, 'saldo_empresa'].sum()
-        need = max(0, forecast.sum() - estoque)
-        st.write(f"Estoque atual: {estoque:.0f}")
-        st.write(f"Sugestão de compra (6m): {need:.0f} unidades")
+        prod = st.selectbox("Código do Produto", df_vendas[key].unique())
+        df_p = df_vendas[df_vendas[key] == prod]
+        sales_ts = df_p.groupby('date')['saldo_empresa'].sum().asfreq('MS').fillna(0)
 
-# --- SERP Google ---
-st.sidebar.title("🔍 SERP Google")
-if st.sidebar.button("Buscar SERP"):
-    kws = st.sidebar.text_area("Palavras-chave (vírgula)")
-    headers = {"User-Agent":"Mozilla/5.0"}
-    for kw in [k.strip() for k in kws.split(',') if k.strip()]:
-        res = requests.get(f"https://www.google.com/search?q={kw.replace(' ','+')}", headers=headers)
-        cnt = len(BeautifulSoup(res.text,'html.parser').select('div.g'))
-        st.sidebar.write(f"**{kw}**: {cnt} resultados")
+        if st.sidebar.button("Atualizar Forecast com Trends"):
+            trend_idx = fetch_trends(terms)
+            forecast = compute_forecast(sales_ts, trend_idx)
+            # Exibição
+            st.subheader(f"Previsão de Vendas (c/ Trends) para {prod}")
+            st.line_chart(pd.concat([sales_ts, forecast]))
+            estoque = df_estoque.loc[df_estoque[key] == prod, 'saldo_empresa'].sum()
+            need = max(0, forecast.sum() - estoque)
+            st.write(f"Estoque atual: {estoque:.0f} unidades")
+            st.write(f"Sugestão de compra (6m): {need:.0f} unidades")
+
+            # Preparar arquivo de retorno
+            df_out = pd.DataFrame({
+                'date': forecast.index,
+                'forecast': forecast.values
+            })
+            # Gravar Excel em memória
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                df_out.to_excel(writer, sheet_name='Forecast', index=False)
+                pd.DataFrame({
+                    'Sugestao_compra_6m': [need]
+                }).to_excel(writer, sheet_name='Resumo', index=False)
+                writer.save()
+                buffer.seek(0)
+            # Botão de download
+            st.download_button(
+                label='📥 Baixar Forecast e Sugestão',
+                data=buffer,
+                file_name=f'retorno_{prod}.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+
+# SERP Tab
+with tab2:
+    st.header("🔍 SERP Google - Tatiana Loureiro")
+    term = st.text_input("Digite o termo para pesquisar (ex: sandália spike)")
+    max_pages = st.number_input("Número de páginas a vasculhar", min_value=1, max_value=10, value=3)
+    if st.button("Buscar posição"):  
+        ua = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+            )
+        }
+        found = False
+        for page in range(max_pages):
+            start = page * 10
+            url = f"https://www.google.com/search?q={term.replace(' ','+')}" + f"&start={start}"
+            res = requests.get(url, headers=ua)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            results = soup.select('div.g')
+            for idx, g in enumerate(results, start=1):
+                if "tatiana loureiro" in g.get_text().lower():
+                    position = start + idx
+                    st.write(f"Encontrado na posição {position} (página {page+1})")
+                    found = True
+                    break
+            if found:
+                break
+        if not found:
+            st.write("Nenhum resultado da Tatiana Loureiro encontrado nas páginas buscadas.")
