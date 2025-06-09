@@ -122,52 +122,5 @@ if uploaded_file:
         prev = forecast_serie(serie,periodos,saz)
         ajuste = trend_uplift.get(l,0)*peso
         prev_adj = (prev*(1+ajuste)).clip(lower=0)
-        estoque_atual = int(df_estoque[(df_estoque["linha_otb"]==l)&(df_estoque["cor_produto"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())&(df_estoque["cor"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())
-        for date, val in prev_adj.items():
-            coverage = estoque_atual / val if val > 0 else None
-            purchase = max(int(val - estoque_atual), 0)
-            records.append({
-                "linha_otb": l,
-                "cor_produto": c,
-                "filial": f,
-                "mes": date.strftime("%Y-%m"),
-                "forecast": int(val),
-                "estoque_atual": estoque_atual,
-                "cobertura_meses": round(coverage, 2) if coverage is not None else None,
-                "compra_sugerida": purchase
-            })
-        # compra sugerida total (mantido em resumo) (mantido em resumo)
-    df_monthly = pd.DataFrame(records)
-    # resumo de compra
-    resumo = df_monthly.groupby(["linha_otb","cor_produto","filial"]).agg(
-        previsao_6m=("forecast","sum")
-    ).reset_index()
-    # computar compra_sugerida separadamente
-    compras = []
-    for _, row in resumo.iterrows():
-        l, c, f = row['linha_otb'], row['cor_produto'], row['filial']
-        estoque_atual = int(df_estoque[(df_estoque["linha"]==l)&(df_estoque["cor"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())
-        compras.append(max(int(row['previsao_6m']) - int(df_estoque[(df_estoque['linha_otb']==row['linha_otb'])&(df_estoque['cor_produto']==row['cor_produto'])&(df_estoque['filial']==row['filial'])]['saldo_empresa'].sum()), 0))
-    resumo['compra_sugerida'] = compras
-    progresso.progress(75)
-
-    status.text("4/4 - Pronto! Gere seu arquivo de saída.")
-    st.success("Forecast gerado com sucesso!")
-    st.dataframe(df_monthly)
-
-    # Download
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as w:
-        df_monthly.to_excel(w,sheet_name='Forecast_Mensal',index=False)
-        resumo.to_excel(w,sheet_name='Resumo',index=False)
-        df_trends.to_excel(w,sheet_name='Tendencias',index=False)
-    buffer.seek(0)
-    progresso.progress(100)
-    status.text("100% concluído")
-
-    st.download_button(
-        "⬇️ Baixar Forecast Mensal e Tendências",
-        buffer.getvalue(),
-        "output_forecast.xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+                        # Obter estoque atual corretamente filtrado por linha_otb, cor_produto e filial
+                estoque_atual = int(df_estoque[(df_estoque["linha_otb"]==l)&(df_estoque["cor_produto"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())
