@@ -116,7 +116,7 @@ if uploaded_file:
         estoque_atual = int(
             df_estoque[
                 (df_estoque['linha_otb']==l)&
-                (df_estoque['cor_produto']==c)&
+                (df_estoque['cor']==c)&
                 (df_estoque['filial']==f)
             ]['saldo_empresa'].sum()
         )
