@@ -55,10 +55,10 @@ def forecast_serie(serie: pd.Series, passos:int, saz:bool) -> pd.Series:
     pass
 
 # --- Interface ---
-st.image(...)(...)
-st.title(...)
+st.image("https://raw.githubusercontent.com/enrique-lima/compra-moda-app/main/LOGO_TL.png", width=300)
+st.title("Previsão de Vendas e Reposição de Estoque")
 
-uploaded_file = st.file_uploader(...)
+uploaded_file = st.file_uploader("📂 Faça upload do arquivo Excel", type=["xlsx"], key='tpl')(...)
 if uploaded_file:
     progresso = st.progress(0)
     status = st.empty()
