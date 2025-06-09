@@ -22,10 +22,12 @@ def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def carregar_dados(uploaded_file) -> tuple[pd.DataFrame, pd.DataFrame]:
-    xls = pd.ExcelFile(uploaded_file)
-    df_venda = normalizar_colunas(xls.parse("VENDA"))
-    df_estoque = normalizar_colunas(xls.parse("ESTOQUE"))
-    # Construir data
+    # Lê diretamente as abas sem precisar engine externa de Excel
+    df_venda = pd.read_excel(uploaded_file, sheet_name="VENDA", engine="openpyxl")
+    df_estoque = pd.read_excel(uploaded_file, sheet_name="ESTOQUE", engine="openpyxl")
+    df_venda = normalizar_colunas(df_venda)
+    df_estoque = normalizar_colunas(df_estoque)
+    # Construir data a partir de ano/mes
     df_venda["mes_num"] = df_venda["mes_venda"].str.lower().map({
         "janeiro":1,"fevereiro":2,"marco":3,"abril":4,"maio":5,"junho":6,
         "julho":7,"agosto":8,"setembro":9,"outubro":10,"novembro":11,"dezembro":12
