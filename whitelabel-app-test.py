@@ -10,6 +10,14 @@ from pytrends.request import TrendReq
 from bs4 import BeautifulSoup
 import requests
 
+# Checagem de dependências para Excel
+try:
+    import openpyxl
+except ImportError:
+    st = __import__('streamlit')
+    st.error("Biblioteca 'openpyxl' não encontrada. Adicione 'openpyxl' no requirements.txt e reinstale as dependências.")
+    st.stop()
+
 # --- Funções Auxiliares ---
 def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [
@@ -22,12 +30,10 @@ def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def carregar_dados(uploaded_file) -> tuple[pd.DataFrame, pd.DataFrame]:
-    # Lê diretamente as abas sem precisar engine externa de Excel
     df_venda = pd.read_excel(uploaded_file, sheet_name="VENDA", engine="openpyxl")
     df_estoque = pd.read_excel(uploaded_file, sheet_name="ESTOQUE", engine="openpyxl")
     df_venda = normalizar_colunas(df_venda)
     df_estoque = normalizar_colunas(df_estoque)
-    # Construir data a partir de ano/mes
     df_venda["mes_num"] = df_venda["mes_venda"].str.lower().map({
         "janeiro":1,"fevereiro":2,"marco":3,"abril":4,"maio":5,"junho":6,
         "julho":7,"agosto":8,"setembro":9,"outubro":10,"novembro":11,"dezembro":12
@@ -94,7 +100,8 @@ st.markdown("Este app faz forecast de vendas e recomendações de compra por Fil
 
 uploaded_file = st.file_uploader("📂 Faça upload do arquivo Excel", type=["xlsx"], key='tpl')
 if uploaded_file:
-    progresso = st.progress(0); status=st.empty()
+    progresso = st.progress(0)
+    status = st.empty()
     status.text("1/4 - Lendo e normalizando dados...")
     df_venda, df_estoque = carregar_dados(uploaded_file)
     progresso.progress(25)
@@ -108,36 +115,53 @@ if uploaded_file:
     peso = st.sidebar.slider("Peso Google Trends (%)",0,100,100,5)/100
     saz = st.sidebar.checkbox("Considerar sazonalidade",True)
     periodos = 6
-    resultado = []
+    # Preparar DataFrame mensal
+    records = []
     for (l,c,f), grp in df_venda.groupby(["linha_otb","cor_produto","filial"]):
         serie = grp.set_index("ano_mes")["qtd_vendida"].resample("MS").sum().fillna(0)
         prev = forecast_serie(serie,periodos,saz)
         ajuste = trend_uplift.get(l,0)*peso
         prev_adj = (prev*(1+ajuste)).clip(lower=0)
-        rec = prev_adj*2.8
         estoque_atual = int(df_estoque[(df_estoque["linha"]==l)&(df_estoque["cor"]==c)&(df_estoque["filial"]==f)]["saldo_empresa"].sum())
-        compra = int(max(rec.sum()-estoque_atual,0))
-        resultado.append({"linha_otb":l,"cor_produto":c,"filial":f,
-                          "previsao_6m":int(prev_adj.sum()),
-                          "compra_sugerida":compra})
-    df_out = pd.DataFrame(resultado)
+        for date, val in prev_adj.items():
+            records.append({
+                "linha_otb":l,
+                "cor_produto":c,
+                "filial":f,
+                "mes":date.strftime("%Y-%m"),
+                "forecast":int(val)
+            })
+        # compra sugerida total (mantido em resumo)
+    df_monthly = pd.DataFrame(records)
+    # resumo de compra
+    resumo = df_monthly.groupby(["linha_otb","cor_produto","filial"]).agg(
+        previsao_6m=("forecast","sum"),
+        compra_sugerida=(lambda x: max(x.sum() - int(df_estoque[(df_estoque["linha"]==x.name[0])&(df_estoque["cor"]==x.name[1])&(df_estoque["filial"]==x.name[2])]["saldo_empresa"].sum()),0))
+    ).reset_index()
     progresso.progress(75)
 
     status.text("4/4 - Pronto! Gere seu arquivo de saída.")
     st.success("Forecast gerado com sucesso!")
-    st.dataframe(df_out)
+    st.dataframe(df_monthly)
 
-        # Download
+    # Download
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as w:
         df_monthly.to_excel(w,sheet_name='Forecast_Mensal',index=False)
         resumo.to_excel(w,sheet_name='Resumo',index=False)
         df_trends.to_excel(w,sheet_name='Tendencias',index=False)
     buffer.seek(0)
+    progresso.progress(100)
+    status.text("100% concluído")
+
     st.download_button(
         "⬇️ Baixar Forecast Mensal e Tendências",
         buffer.getvalue(),
         "output_forecast.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )(
+        "⬇️ Baixar Forecast Mensal e Tendências",
+        buffer.getvalue(),
+        "output_forecast.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
