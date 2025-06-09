@@ -101,16 +101,12 @@ with tab1:
                 'date': forecast.index,
                 'forecast': forecast.values
             })
-            # Gravar Excel em memória
             buffer = BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 df_out.to_excel(writer, sheet_name='Forecast', index=False)
-                pd.DataFrame({
-                    'Sugestao_compra_6m': [need]
-                }).to_excel(writer, sheet_name='Resumo', index=False)
+                pd.DataFrame({'Sugestao_compra_6m': [need]}).to_excel(writer, sheet_name='Resumo', index=False)
                 writer.save()
                 buffer.seek(0)
-            # Botão de download
             st.download_button(
                 label='📥 Baixar Forecast e Sugestão',
                 data=buffer,
@@ -138,7 +134,9 @@ with tab2:
             soup = BeautifulSoup(res.text, 'html.parser')
             results = soup.select('div.g')
             for idx, g in enumerate(results, start=1):
-                if "tatiana loureiro" in g.get_text().lower():
+                link = g.find('a')
+                href = link['href'] if link and link.has_attr('href') else ''
+                if "tatianaloureiro.com.br" in href.lower():
                     position = start + idx
                     st.write(f"Encontrado na posição {position} (página {page+1})")
                     found = True
