@@ -127,10 +127,17 @@ if uploaded_file:
     st.success("Forecast gerado com sucesso!")
     st.dataframe(df_out)
 
-    # Download
+        # Download
     buffer = BytesIO()
-    with pd.ExcelWriter(buffer,engine='xlsxwriter') as w:
-        df_out.to_excel(w,sheet_name='Resumo',index=False)
+    with pd.ExcelWriter(buffer, engine='openpyxl') as w:
+        df_monthly.to_excel(w,sheet_name='Forecast_Mensal',index=False)
+        resumo.to_excel(w,sheet_name='Resumo',index=False)
         df_trends.to_excel(w,sheet_name='Tendencias',index=False)
     buffer.seek(0)
-    st.download_button("⬇️ Baixar Forecast e Tendências",buffer.getvalue(),"output_forecast.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button(
+        "⬇️ Baixar Forecast Mensal e Tendências",
+        buffer.getvalue(),
+        "output_forecast.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
