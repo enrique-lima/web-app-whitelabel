@@ -46,8 +46,65 @@ def carregar_dados(uploaded_file) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 @st.cache_data(show_spinner=False, max_entries=32, ttl=3600*6)
 def get_trend_uplift(linhas_otb: list[str]) -> tuple[dict[str,float], pd.DataFrame]:
-    # TODO: implementar lógica de Google Trends conforme versão anterior
-    pass
+    """
+    Para cada linha_otb, obtém uplift usando Google Trends:
+    retorna dicionário {linha: uplift} e DataFrame de registros.
+    """
+    pytrends = TrendReq(hl="pt-BR", tz=-180)
+    genericos = [
+        "acessorios","alpargata","anabela","mocassim","bolsa","bota","cinto",
+        "loafer","rasteira","sandalia","sapatilha","scarpin","tenis","meia","meia pata",
+        "salto","salto fino","salto normal","sapato tratorado","mule","oxford",
+        "papete","peep flat","slide","sandália spike","salto spike","papete spike"
+    ]
+    concorrentes = ["alexander birman","schutz","arezzo","luiza barcelos","carmen steffens"]
+    registros = []
+    tendencias = {}
+    for linha in linhas_otb:
+        termos = [linha.lower()] + genericos + concorrentes
+        try:
+            pytrends.build_payload(termos, timeframe="today 3-m", geo="BR")
+            df_tr = pytrends.interest_over_time()
+            if not df_tr.empty:
+                base = df_tr[linha.lower()].mean()
+                gen = df_tr[genericos].mean(axis=1).mean()
+                conc = df_tr[concorrentes].mean(axis=1).mean()
+                uplift = ((base + gen + conc)/3 - 50)/100
+            else:
+                base = gen = conc = uplift = 0
+        except:
+            base = gen = conc = uplift = 0
+        tendencias[linha] = round(uplift,3)
+        registros.append({
+            "linha_otb": linha,
+            "score_linha": round(base,2),
+            "score_generico": round(gen,2),
+            "score_concorrente": round(conc,2),
+            "uplift_aplicado": round(uplift,3)
+        })
+        time.sleep(1)
+    df_records = pd.DataFrame(registros)
+    return tendencias, df_records
+
+@st.cache_data(show_spinner=False, max_entries=128)
+def forecast_serie(serie: pd.Series, passos:int, saz:bool) -> pd.Series:
+    """
+    Forecast com ExponentialSmoothing.
+    Se série >=24 e saz: modelo sazonal, senão modelo aditivo,
+    caso muito curto retorna média constante.
+    """
+    if serie.count() >= 24 and saz:
+        modelo = ExponentialSmoothing(serie, trend="add", seasonal="add", seasonal_periods=12)
+        prev = modelo.fit().forecast(passos)
+    elif serie.count() >= 6:
+        modelo = ExponentialSmoothing(serie, trend="add", seasonal=None)
+        prev = modelo.fit().forecast(passos)
+    else:
+        prev = pd.Series(
+            [serie.mean()] * passos,
+            index=pd.date_range(serie.index[-1] + relativedelta(months=1), periods=passos, freq="MS"),
+        )
+    return prev.clip(lower=0)
 
 @st.cache_data(show_spinner=False, max_entries=128)
 def forecast_serie(serie: pd.Series, passos:int, saz:bool) -> pd.Series:
